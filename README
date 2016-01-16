@@ -113,6 +113,7 @@ Some of the advantages of the new version are:
  - Support for hook scripts at various points
  - Support for multiple archives, even if they are pushed using one ssh key
  - Support for multi-hop, multi-stage archive synchronisations
+ - Support for pushing over rsync
 
   Correct support for multiple pushes
   -----------------------------------
@@ -170,10 +171,14 @@ Some of the advantages of the new version are:
   Support for multiple archives, even if they are pushed using one ssh key
   ------------------------------------------------------------------------
   If you get multiple archives from your upstream mirror (say Debian,
-  Debian-Backports and Volatile), previously you had to use 3 different ssh
+  Debian-Backports and Ports), previously you had to use 3 different ssh
   keys to be able to automagically synchronize them.  This script can do it
   all with just one key, if your upstream mirror tells you which archive.
   See "Commandline/SSH options" below for further details.
+
+  Support for pushing over rsync
+  ------------------------------
+  ftpsync can push mirrors who do not support the standard ssh trigger.
 
 
 For details of all available options, please see the extensive documentation
@@ -228,6 +233,32 @@ The file format is as follows:
  The third line MUST NOT be the DNS RR name, even if the mirror is part
  of it. It MUST BE the hosts own name.  This is in contrast to the filename,
  which SHOULD be the DNS RR name.
+
+RSYNC Push feature
+==================
+The rsync push feature allows to push mirrors that do not allow the
+(BETTER, if you can, use that!) standard ssh triggered syncing
+process. Instead the downstream mirror has to allow incoming rsync
+connections to write to the mirror directory, and ftpsync needs a
+user/password to access this.
+
+The configuration differs in a few points (still, based on the
+ftpsync.conf.sample as shipped by ftpsync):
+
+TO needs to read "rsync:/path/to/your/mirror", that is the string
+"rsync:" (including :) followed by the path on the local mirror (not
+downstream) where the existing mirror lives.
+
+MIRRORNAME needs to be set to the downstreams name, it is used to make
+the lockfile and tracefile name, as such the default "hostname -f"
+will be wrong.
+
+RSYNC_PATH, RSYNC_HOST, RSYNC_USER and RSYNC_PASSWORD of course need
+to be set to values allowing to write to the downstream mirrors rsync
+share.
+
+HUB can not be set to true, this ftpsync will not ever push other
+mirrors (as the push would come from us, not downstream).
 
 
 runmirrors

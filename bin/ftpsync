@@ -58,10 +58,10 @@ VERSION="20150425"
 # options are seperated by space. All the words have to have the word
 # sync: in front or nothing will get used!
 #
-# Option        Behaviour
-# stage1		 Only do stage1 sync
-# stage2		 Only do stage2 sync
-# all			 Do a complete sync
+# Option         Behaviour
+# stage1         Only do stage1 sync
+# stage2         Only do stage2 sync
+# all            Do a complete sync
 # mhop           Do a mhop sync, usually additionally to stage1
 # archive:foo    Sync archive foo (if config for foo is available)
 # callback       Call back when done (needs proper ssh setup for this to
@@ -129,6 +129,10 @@ cleanup() {
         fi
     fi
 
+    # Get rid of our temporary trace directory, in case we are a pushing ftpsync
+    if [[ -n ${SOURCEDIR} ]] && [[ -n ${TO} ]] && [[ -d ${TO} ]]; then
+        rm -rf ${TO}
+    fi
     savelog "${LOGDIR}/rsync-${NAME}.log"
     savelog "${LOGDIR}/rsync-${NAME}.error"
     savelog "$LOG" > /dev/null
@@ -190,17 +194,17 @@ tracefile() {
                 {
                     LC_ALL=POSIX LANG=POSIX date -u
                     if [[ date != ${EXTENDEDTRACE} ]]; then
-                        rfc822date=$(LC_ALL=POSIX LANG=POSIX date -u -R)
-                        echo "Date: ${rfc822date}"
+                        RFC822DATE=$(LC_ALL=POSIX LANG=POSIX date -u -R)
+                        FILESOA=$(awk -F": " ' $1=="Archive serial" {print $2}' ${SOURCEDIR:-${TO}}/project/trace/master || echo unknown )
+
+                        echo "Date: ${RFC822DATE}"
                         echo "Date-Started: ${DATE_STARTED}"
-
-                        FILESOA=$(awk -F": " ' $1=="Archive serial" {print $2}' ${TO}/project/trace/master || echo unknown )
                         echo "Archive serial: ${FILESOA}"
-
                         echo "Used ftpsync version: ${VERSION}"
                         echo "Running on host: ${TRACEHOST}"
+
                         if [[ full = ${EXTENDEDTRACE} ]]; then
-                            GLOBALARCHLIST="source amd64 arm64 armel armhf hurd-i386 i386 ia64 kfreebsd-amd64 kfreebsd-i386 mips mipsel powerpc ppc64el s390 s390x sparc"
+                            GLOBALARCHLIST="source amd64 arm64 armel armhf hurd-i386 i386 ia64 kfreebsd-amd64 kfreebsd-i386 mips mips64el mipsel powerpc ppc64el s390 s390x sparc"
 
                             AEXCLUDE="^${ARCH_EXCLUDE// /\$|^}$"
                             ARCHLIST=""
@@ -233,15 +237,15 @@ tracefile() {
                 } > "${TRACEFILE}.new"
                 mv "${TRACEFILE}.new" "${TRACEFILE}"
 
-                if [[ full = ${EXTENDEDTRACE} ]] || [[ -e ${TO}/${TRACEHIERARCHY}.mirror ]]; then
+                if [[ full = ${EXTENDEDTRACE} ]] || [[ -e ${SOURCEDIR:-${TO}}/${TRACEHIERARCHY}.mirror ]]; then
                     {
-                        if [[ -e ${TO}/${TRACEHIERARCHY}.mirror ]]; then
-                            cat ${TO}/${TRACEHIERARCHY}.mirror
+                        if [[ -e ${SOURCEDIR:-${TO}}/${TRACEHIERARCHY}.mirror ]]; then
+                            cat ${SOURCEDIR:-${TO}}/${TRACEHIERARCHY}.mirror
                         fi
                         echo "$(basename "${TRACEFILE}") ${MIRRORNAME} ${TRACEHOST} ${RSYNC_HOST}"
                     } > "${TO}/${TRACEHIERARCHY}".new
                     mv "${TO}/${TRACEHIERARCHY}".new "${TO}/${TRACEHIERARCHY}"
-                    cp "${TO}/${TRACEHIERARCHY}" "${TO}/${TRACEHIERARCHY}.mirror"
+                    cp "${SOURCEDIR:-${TO}}/${TRACEHIERARCHY}" "${TO}/${TRACEHIERARCHY}.mirror"
 
                     (cd ${tracedir} && ls -1rt) | grep -E -v '^_|^master$' > "${TO}/${TRACELIST}"
                 else
@@ -253,8 +257,46 @@ tracefile() {
             error "Unsupported EXTENDEDTRACE value configured in ${BASEDIR}/etc/${NAME}.conf, please fix"
             ;;
     esac
+}
+
+# Extra function for mirrors we push via rsync: Push the tracefiles.
+# Takes an argument of start or end, meaning the time of the ftpsync
+# run we are called. Start does only transfer the AUIP file, while end
+# sends the whole trace dir over and gets rid of the AUIP file.
+tracepush() {
+    # Always lowercase
+    declare -l TRACETIME=${1:-"start"}
+
+    if [[ ${TRACETIME} == start ]]; then
+        log "Pushing AUIP file: ${RSYNC} ${RSYNC_DEFOPTS} ${LOCK} ${RSYNCPTH}::${RSYNC_PATH}"
+        set +e
+        ${RSYNC} ${RSYNC_DEFOPTS} ${LOCK} ${RSYNCPTH}::${RSYNC_PATH}  >>"${LOGDIR}/rsync-${NAME}.log" 2>>"${LOGDIR}/rsync-${NAME}.error"
+        result=$?
+        set -e
+
+        log "Back from rsync with returncode ${result}"
+    elif [[ ${TRACETIME} == end ]]; then
+        # Remove the Archive-Update-in-Progress file
+        rm -f "${LOCK}"
+
+        log "Pushing tracefiles: ${RSYNC} ${RSYNC_DEFOPTS} ${RSYNC_OPTIONS2} ${RSYNCCMDARGS}"
+        # And while it would be nice here to only use ${TO} as a source and not the
+        # whole archive (less scanning for rsync), it doesn't work. We want --delete to
+        # get rid of the AUIP file, and if we don't provide the archive files for rsync,
+        # then the target ends up nice and empty, not so useful as a mirror.
+        set +e
+        ${RSYNC} ${RSYNC_DEFOPTS} ${RSYNC_OPTIONS2} ${EXCLUDE} ${SOURCE_EXCLUDE} \
+                 ${RSYNCCMDARGS} >>"${LOGDIR}/rsync-${NAME}.log" 2>>"${LOGDIR}/rsync-${NAME}.error"
+        result=$?
+        set -e
+
+        log "Back from rsync with returncode ${result}"
+    else
+        error "Unknown tracepush argument ${TRACETIME}"
+    fi
 
 }
+
 ########################################################################
 ########################################################################
 
@@ -317,8 +359,8 @@ fi
 # mirrorring. Use as space seperated list.                             #
 # Possible values are:                                                 #
 # alpha amd64 arm arm64 armel armhf hppa hurd-i386 i386 ia64 mips      #
-# mipsel powerpc ppc64el s390 s390x sparc kfreebsd-i386 kfreebsd-amd64 #
-# source                                                               #
+# mips64el mipsel powerpc ppc64el s390 s390x sparc kfreebsd-i386       #
+# kfreebsd-amd64 source                                                #
 # eg. ARCH_EXCLUDE="arm arm64 armel mipsel mips s390 s390x sparc"      #
 #                                                                      #
 # An unset value will mirror all architectures                         #
@@ -333,11 +375,32 @@ LOGDIR=${LOGDIR:-"${BASEDIR}/log"}
 # Our own logfile
 LOG=${LOG:-"${LOGDIR}/${NAME}.log"}
 
-# Where should we put all the mirrored files?
-TO=${TO:-"/srv/mirrors/debian/"}
-
 # used by log() and error()
 PROGRAM=${PROGRAM:-"${NAME}"}
+
+# Where should we put all the mirrored files?
+TO=${TO:-"/srv/mirrors/debian/"}
+if [[ ${TO:0:6} == rsync: ]]; then
+    # Special case: We do not sync from remote to us, we push (via
+    # rsync) to a remote. TO is abused to point to the source dir,
+    # from which we read.
+    SOURCEDIR=${TO:6}
+    # The MIRRORNAME may not be the local hosts fqdn
+    if [[ ${MIRRORNAME} == $(hostname -f) ]]; then
+        error "ftpsync push needs a proper MIRRORNAME configured, it must be downstreams name, not ours"
+        exit 6
+    fi
+    # Now that we now where the mirror is, we overwrite TO with a
+    # temporary location. That will be where we (locally) place our
+    # lockfile, trace files, hierary, etc.
+    TO=$(mktemp -d)
+    # As mktemp makes this mode 700 - and thats not what we want on a
+    # mirror, change it.
+    chmod 755 ${TO}
+else
+    # Normal way, we pull, no SOURCEDIR set
+    SOURCEDIR=""
+fi
 
 # Where to send mails about mirroring to?
 if [[ $(hostname -d) != debian.org ]]; then
@@ -402,24 +465,30 @@ else
     RSYNC_DELETE_METHOD=after
 fi
 
-# Default rsync options for *every* rsync call
-RSYNC_OPTIONS=${RSYNC_OPTIONS:-"-prltvHSB8192 --timeout 3600 --stats ${RSYNC_FILTER}"}
-# Options we only use in the first pass, where we do not want packages/sources to fly in yet and don't want to delete files
+# Default rsync options for every push
+RSYNC_DEFOPTS=${RSYNC_DEFOPTS:-"-prltvHSB8192 --timeout 3600 --stats"}
+# Rsync options for *every* rsync call except tracefile push
+RSYNC_OPTIONS=${RSYNC_OPTIONS:-"${RSYNC_DEFOPTS} ${RSYNC_FILTER}"}
+# Options we only use in the first pass, where we do not want
+# packages/sources to fly in yet and don't want to delete files
 RSYNC_OPTIONS1=${RSYNC_OPTIONS1:-"--exclude=Packages* --exclude=Sources* --exclude=Release* --exclude=InRelease --exclude=i18n/* --exclude=ls-lR*"}
-# Options for the second pass, where we do want everything, including deletion of old and now unused files
+# Options for the second pass, where we do want everything, including
+# deletion of old and now unused files
 RSYNC_OPTIONS2=${RSYNC_OPTIONS2:-"--max-delete=40000 --delay-updates --delete --delete-excluded"}
 # Which rsync share to use on our upstream mirror?
 RSYNC_PATH=${RSYNC_PATH:-"debian"}
 
-# Extra rsync options as defined by the admin locally. Won't be set
-# to any default by ftpsync. Those will be added to EACH AND EVERY rsync call.
+# Extra rsync options as defined by the admin locally. Won't be set to
+# any default by ftpsync. Those will be added to EACH AND EVERY rsync
+# call.
 RSYNC_EXTRA=${RSYNC_EXTRA:-""}
 
-# Now add the bwlimit option. As default is 0 we always add it, rsync interprets
-# 0 as unlimited, so this is safe.
+# Now add the bwlimit option. As default is 0 we always add it, rsync
+# interprets 0 as unlimited, so this is safe.
 RSYNC_OPTIONS="${RSYNC_EXTRA} --bwlimit=${RSYNC_BW} ${RSYNC_OPTIONS}"
 
-# Finally, make sure RSYNC_OPTIONS2 has either --delete-after or --delete-delay
+# Finally, make sure RSYNC_OPTIONS2 has either --delete-after or
+# --delete-delay
 RSYNC_OPTION_REGEX="--delete-(after|delay)"
 if ! [[ ${RSYNC_OPTIONS2} =~ ${RSYNC_OPTION_REGEX} ]]; then
     RSYNC_OPTIONS2+=" --delete-${RSYNC_DELETE_METHOD}"
@@ -431,6 +500,7 @@ RSYNC_HOST=${RSYNC_HOST:-""}
 # Error out if we have no host to sync from
 if [[ -z ${RSYNC_HOST} ]]; then
     error "Missing a host to mirror from, please set RSYNC_HOST variable in ${BASEDIR}/etc/${NAME}.conf"
+    exit 42
 fi
 
 # our username for the rsync share
@@ -493,6 +563,13 @@ HOOK5=${HOOK5:-""}
 # Are we a hub?
 HUB=${HUB:-"false"}
 
+# If we push via rsync, we can not be a HUB, error out if user tries
+# to use us like this.
+if [[ -n ${SOURCEDIR} ]] && [[ ${HUB} == true ]]; then
+    error "RSYNC PUSH configured but HUB set to true, impossible."
+    exit 5
+fi
+
 DATE_STARTED=$(LC_ALL=POSIX LANG=POSIX date -u -R)
 ########################################################################
 # Really nothing to see below here. Only code follows.                 #
@@ -554,6 +631,11 @@ trap cleanup ERR TERM HUP INT QUIT
 # Start log by redirecting stdout and stderr there and closing stdin
 exec >"$LOG" 2>&1 <&-
 log "Mirrorsync start"
+if [[ -n ${SOURCEDIR} ]]; then
+    log "We are pushing over rsync"
+    # Fill up tracedir
+    cp -a ${SOURCEDIR}/project/trace/ --target-directory=${TO}/project/
+fi
 
 # Look who pushed us and note that in the log.
 SSH_CONNECTION=${SSH_CONNECTION:-""}
@@ -575,15 +657,27 @@ HOOK=(
 )
 hook $HOOK
 
-# Now, we might want to sync from anonymous too.
-# This is that deep in this script so hook1 could, if wanted, change things!
+# Now, we might want to sync from anonymous too. This is that deep in
+# this script so hook1 could, if wanted, change things!
 if [[ -z ${RSYNC_USER} ]]; then
     RSYNCPTH="${RSYNC_HOST}"
 else
     RSYNCPTH="${RSYNC_USER}@${RSYNC_HOST}"
 fi
 
-# Now do the actual mirroring, and run as long as we have an updaterequired file.
+# If we are pushing via rsync, our commandline is a bit different
+if [[ -z ${SOURCEDIR} ]]; then
+    # Normal pull
+    RSYNCCMDARGS="${RSYNCPTH}::${RSYNC_PATH} ${TO}"
+else
+    # Push to someone via rsync
+    # Yes, two sourcedirs. rsync is clever enough to merge them.
+    RSYNCCMDARGS="${TO}/* ${SOURCEDIR} ${RSYNCPTH}::${RSYNC_PATH}"
+    tracepush start
+fi
+
+# Now do the actual mirroring, and run as long as we have an
+# updaterequired file.
 export RSYNC_PASSWORD
 export RSYNC_PROXY
 
@@ -596,13 +690,13 @@ while [[ -e ${UPDATEREQUIRED} ]]; do
     if [[ true = ${SYNCSTAGE1} ]] || [[ true = ${SYNCALL} ]]; then
         while [[ -e ${UPDATEREQUIRED} ]]; do
             rm -f "${UPDATEREQUIRED}"
-            log "Running stage1: ${RSYNC} ${RSYNC_OPTIONS} ${RSYNC_OPTIONS1} ${EXCLUDE} ${SOURCE_EXCLUDE}  ${RSYNCPTH}::${RSYNC_PATH} ${TO}"
+            log "Running stage1: ${RSYNC} ${RSYNC_OPTIONS} ${RSYNC_OPTIONS1} ${EXCLUDE} ${SOURCE_EXCLUDE} ${RSYNCCMDARGS}"
 
             set +e
             # Step one, sync everything except Packages/Releases
             rsync_started=$(date +%s)
             ${RSYNC} ${RSYNC_OPTIONS} ${RSYNC_OPTIONS1} ${EXCLUDE} ${SOURCE_EXCLUDE} \
-                ${RSYNCPTH}::${RSYNC_PATH} "${TO}" >>"${LOGDIR}/rsync-${NAME}.log" 2>>"${LOGDIR}/rsync-${NAME}.error"
+                ${RSYNCCMDARGS} >>"${LOGDIR}/rsync-${NAME}.log" 2>>"${LOGDIR}/rsync-${NAME}.error"
             result=$?
             rsync_ended=$(date +%s)
             STATS_TOTAL_RSYNC_TIME1=$(( STATS_TOTAL_RSYNC_TIME1 + rsync_ended - rsync_started ))
@@ -661,7 +755,7 @@ while [[ -e ${UPDATEREQUIRED} ]]; do
             if [[ ${UPDATE_RETRIES} -lt ${UIPRETRIES} ]]; then
                 log "Retrying update in ${UIPSLEEP}"
                 touch "${UPDATEREQUIRED}"
-                UPDATE_RETRIES=$(($UPDATE_RETRIES+1))
+                UPDATE_RETRIES=$(( $UPDATE_RETRIES+1 ))
                 sleep "${UIPSLEEP}"
                 result=0
             else
@@ -670,14 +764,14 @@ while [[ -e ${UPDATEREQUIRED} ]]; do
                 result=1
             fi
         else
-            log "Running stage2: ${RSYNC} ${RSYNC_OPTIONS} ${RSYNC_OPTIONS2} ${EXCLUDE} ${SOURCE_EXCLUDE} ${RSYNCPTH}::${RSYNC_PATH} ${TO}"
+            log "Running stage2: ${RSYNC} ${RSYNC_OPTIONS} ${RSYNC_OPTIONS2} ${EXCLUDE} ${SOURCE_EXCLUDE} ${RSYNCCMDARGS}"
 
             set +e
             # We are lucky, it worked. Now do step 2 and sync again, this time including
             # the packages/releases files
             rsync_started=$(date +%s)
             ${RSYNC} ${RSYNC_OPTIONS} ${RSYNC_OPTIONS2} ${EXCLUDE} ${SOURCE_EXCLUDE} \
-                ${RSYNCPTH}::${RSYNC_PATH} "${TO}" >>"${LOGDIR}/rsync-${NAME}.log" 2>>"${LOGDIR}/rsync-${NAME}.error"
+                ${RSYNCCMDARGS} >>"${LOGDIR}/rsync-${NAME}.log" 2>>"${LOGDIR}/rsync-${NAME}.error"
             result=$?
             rsync_ended=$(date +%s)
             STATS_TOTAL_RSYNC_TIME2=$(( STATS_TOTAL_RSYNC_TIME2 + rsync_ended - rsync_started ))
@@ -707,8 +801,10 @@ while [[ -e ${UPDATEREQUIRED} ]]; do
     hook $HOOK
 done
 
-# We only update our tracefile when we had a stage2 or an all sync.
-# Otherwise we would update it after stage1 already, which is wrong.
+# The "real" tracefile is only updated after stage2 or an all sync.
+# After stage1 we put a -stage1 tracefile to show we finished step1,
+# stage2 gets rid of it again. This shows mirror status when we get
+# partial pushes (staged, mhop)
 if [[ true = ${SYNCSTAGE2} ]] || [[ true = ${SYNCALL} ]]; then
     tracefile
     if [[ true = ${SYNCALL} ]]; then
@@ -717,7 +813,6 @@ if [[ true = ${SYNCSTAGE2} ]] || [[ true = ${SYNCALL} ]]; then
 elif [[ true = ${SYNCSTAGE1} ]]; then
     tracefile "${TO}/${TRACE}-stage1"
 fi
-
 
 HOOK=(
     HOOKNR=4
@@ -731,13 +826,20 @@ if [[ true = ${SYNCCALLBACK} ]]; then
     set -e
 fi
 
-# Remove the Archive-Update-in-Progress file before we push our downstreams.
-rm -f "${LOCK}"
+if [[ -n ${SOURCEDIR} ]]; then
+    # An ftpsync-push needs to remove the AUIP file (our LOCK) on the
+    # remote host
+    tracepush end
+else
+    # Remove the Archive-Update-in-Progress file before we push our
+    # downstreams.
+    rm -f "${LOCK}"
+fi
 
 # Check if there is a newer version of ftpsync. If so inform the admin, but not
 # more than once every third day.
-if [[ -r ${TO}/project/ftpsync/LATEST.VERSION ]]; then
-    LATEST=$(< "${TO}/project/ftpsync/LATEST.VERSION")
+if [[ -r ${SOURCEDIR:-${TO}}/project/ftpsync/LATEST.VERSION ]]; then
+    LATEST=$(< "${SOURCEDIR:-${TO}}/project/ftpsync/LATEST.VERSION")
     if ! [[ ${LATEST} =~ [0-9]+ ]]; then
         LATEST=0
     fi

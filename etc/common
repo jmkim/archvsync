@@ -96,7 +96,7 @@ signal () {
         # Default normal "fire and forget" push. We background that, we do not care about the mirrors doings
         log "Sending normal push" >> "${LOGDIR}/${MIRROR}.log"
         PUSHARGS1="sync:all"
-        ssh -n $SSH_OPTIONS "${HOSTNAME}" "${PUSHARGS} ${PUSHARGS1}" >>"${LOGDIR}/${MIRROR}.log" 2>&1
+        ssh -n $SSH_OPTIONS "${HOSTNAME}" "${PUSHARGS} ${PUSHARGS1}" & >>"${LOGDIR}/${MIRROR}.log" 2>&1
         if [[ $? -eq 255 ]]; then
             error "Trigger to ${HOSTNAME} failed"  >> "${LOG}"
         else

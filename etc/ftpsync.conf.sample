@@ -13,6 +13,8 @@
 ## Destination of the mirrored files. Should be an empty directory.
 ## CAREFUL, this directory will contain the mirror. Everything else
 ## that might have happened to be in there WILL BE GONE after the mirror sync!
+## Special case: If this starts with "rsync:", then it points to the
+## source dir for an rsync *PUSH* to a downstream mirror.
 #TO="/srv/mirrors/debian/"
 
 ## The upstream name of the rsync share.
@@ -65,7 +67,7 @@
 ## Use as space seperated list.
 ## Possible values are:
 ## alpha amd64 arm arm64 armel armhf hppa hurd-i386 i386 ia64 kfreebsd-amd64
-## kfreebsd-i386 m68k mipsel mips powerpc ppc64el s390 s390x sh sparc source
+## kfreebsd-i386 m68k mipsel mips64el mips powerpc ppc64el s390 s390x sh sparc source
 ## eg. ARCH_EXCLUDE="alpha arm arm64 armel mipsel mips s390 sparc"
 ## An unset value will mirror all architectures (default!)
 ## Notice: source shall not be excluded on an official mirror
@@ -148,8 +150,11 @@
 ## appropriate.
 #RSYNC_FILTER="--filter=protect_Archive-Update-in-Progress-${MIRRORNAME} --filter=protect_${TRACE} --filter=protect_Archive-Update-Required-${MIRRORNAME}"
 
-## Default rsync options every rsync invocation sees.
-#RSYNC_OPTIONS="-prltvHSB8192 --timeout 3600 --stats ${RSYNC_FILTER}"
+## Default rsync options for every push
+#RSYNC_DEFOPTS="-prltvHSB8192 --timeout 3600 --stats"
+
+## Rsync options for every rsync call (except tracefile push, that only gets RSYNC_DEFOPTS)
+#RSYNC_OPTIONS="${RSYNC_DEFOPTS} ${RSYNC_FILTER}"
 
 ## Options the first pass gets. We do not want the Packages/Source indices
 ## here, and we also do not want to delete any files yet.

@@ -9,7 +9,7 @@
 #
 # The fields Type, ShortName, HostName and User are *mandantory*.
 #
-# Type is either all, staged or mhop, meaning:
+# Type is either all, staged, mhop or rsync, meaning:
 # all    - do a "normal" push. Trigger them, go on.
 #          This is the default for a Debian mirror. It does all the
 #          right things (when the mirror uses ftpsync), like staged-syncing.
@@ -21,6 +21,14 @@
 # mhop   - send a multi-hop staged push. This will tell the mirror to initiate
 #          a mhop/stage1 push to its staged/mhop mirrors and then exit.
 #          When all mhop got back we then send the stage2 through to them.
+# rsync  - Start a ftpsync-push, that is, ftpsync pushing files via
+#          rsync to a mirror. See "RSYNC PUSH" below for details on that.
+#
+# One special value is allowed: DELAY
+# This word has to be on a line itself, followed by a space and a number.
+# nothing else, not even whitespace. It will trigger a pause of $number
+# seconds between the two mirrors. If no number is given it defaults to
+# 600 seconds.
 #
 # ShortName will be used as a shorthand in logfile outputs and for the logfile
 # where every ssh output gets redirected to.
@@ -47,6 +55,22 @@
 # a new runmirrors can run with an old runmirrors.mirror file. This should make updates
 # painless.
 #
+# RSYNC PUSH
+# A rsync push is a special kind of mirror which does not follow the
+# usual "get triggered by ssh with forced commands" way. This is not
+# nice, non-default and ugly, best to avoid.
+#
+# A rsync push mirror needs an extra ftpsync configuration, and
+# runmirrors will call ftpsync with an appropriate commandline to use
+# this. See the ftpsync.conf.sample and the README file for notes on
+# how to properly configure ftpsync push. The ftpsync call will be
+# backgrounded to allow runmirrors to continue.
+#
+# The meaning of the hostname field changes, it contains the archive
+# name of the ftpsync configuration file. So "pushkdo" will use
+# ftpsync-pushkdo.conf.
+#
+#
 # Examples:
 # all eu.puccini puccini.debian.org archvsync 2
 #
@@ -70,8 +94,7 @@
 #    push its own staged/mhop mirrors before returning. When both returned
 #    then stage2 is sent to both.
 #
-# One special value is allowed: DELAY
-# This word has to be on a line itself, followed by a space and a number.
-# nothing else, not even whitespace. It will trigger a pause of $number
-# seconds between the two mirrors. If no number is given it defaults to
-# 600 seconds.
+# rsync mirror-isc mirror-isc-security
+#
+# -> will run an 'ftpsync sync:archive:mirror-isc-security" and as
+#    such needs a "ftpsync-mirror-isc-security.conf" config file.

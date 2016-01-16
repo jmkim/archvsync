@@ -193,6 +193,15 @@ while read MTYPE MLNAME MHOSTNAME MUSER MSSHOPT; do
         fi
     fi
 
+    # Special case, rsync push - just call an ftpsync in the background and
+    # continue with the other mirrors.
+    if [[ ${MTYPE} == rsync ]]; then
+        # Start backgrounded ftpsync
+        log "RSYNC push, starting background ftpsync call for ${MLNAME}" >> "${LOG}"
+        ${BASEDIR}/bin/ftpsync sync:archive:${MHOSTNAME} &
+        log "ftpsync for ${MLNAME} started" >> "${LOG}"
+    fi
+
     # Now, MSSHOPT may start with a -. In that case the whole rest of the line is taken
     # as a set of options to give to ssh, we pass it without doing anything with it.
     # If it starts with a 1 or 2 then it will tell us about the ssh protocol version to use,
